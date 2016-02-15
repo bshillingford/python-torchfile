@@ -4,19 +4,23 @@ Python, depending only on `struct`, `array`, and numpy.
 
 Supported types:
  * `nil` to Python `None`
- * numbers to Python floats
+ * numbers to Python floats, or by default a heuristic changes them to ints or
+   longs if they are integral
  * booleans
- * tables unconditionally to a special dict (*), regardless of whether they 
-   are list-like)
+ * strings: read as byte strings (Python 3) or normal strings (Python 2), like
+   lua strings which don't support unicode, and that can contain null chars
+ * tables converted to a special dict (*); if they are list-like (i.e. have
+   numeric keys from 1 through n) they become a python list by default
  * Torch classes: supports Tensors and Storages, and most classes such as 
    modules. Trivially extensible much like the Torch serialization code.
    Trivial torch classes like most `nn.Module` subclasses become `TorchObject`
-   `namedtuple`s.
+   `namedtuple`s. The `torch_readers` dict contains the mapping from class
+   names to reading functions.
  * functions: loaded into the `LuaFunction` `namedtuple`,
    which simply wraps the raw serialized data, i.e. upvalues and code.
    These are mostly useless, but exist so you can deserialize anything.
 
-(*) Since Lua allows you to index a table with a table but not Python, we 
+(*) Since Lua allows you to index a table with a table but Python does not, we 
     replace dicts with a subclass that is hashable, and change its
     equality comparison behaviour to compare by reference.
     See `hashable_uniq_dict`.
@@ -25,12 +29,12 @@ Currently, the implementation assumes the system-dependent binary Torch
 format, but minor refactoring can give support for the ascii format as well.
 """
 
-TYPE_NIL      = 0
-TYPE_NUMBER   = 1
-TYPE_STRING   = 2
-TYPE_TABLE    = 3
-TYPE_TORCH    = 4
-TYPE_BOOLEAN  = 5
+TYPE_NIL = 0
+TYPE_NUMBER = 1
+TYPE_STRING = 2
+TYPE_TABLE = 3
+TYPE_TORCH = 4
+TYPE_BOOLEAN = 5
 TYPE_FUNCTION = 6
 TYPE_RECUR_FUNCTION = 8
 LEGACY_TYPE_RECUR_FUNCTION = 7
@@ -42,11 +46,10 @@ import numpy as np
 import sys
 from collections import namedtuple
 
-filename = sys.argv[1]
-
 TorchObject = namedtuple('TorchObject', ['typename', 'obj'])
 LuaFunction = namedtuple('LuaFunction',
                          ['size', 'dumped', 'upvalues'])
+
 
 class hashable_uniq_dict(dict):
     """
@@ -56,34 +59,35 @@ class hashable_uniq_dict(dict):
 
     This way, dicts can be keys of other dicts.
     """
+
     def __hash__(self):
         return id(self)
+
     def __eq__(self, other):
         return id(self) == id(other)
     # TODO: dict's __lt__ etc. still exist
 
 torch_readers = {}
 
+
 def add_tensor_reader(typename, dtype):
-    def read_tensor_generic(f, version):
-        # source: https://github.com/torch/torch7/blob/master/generic/Tensor.c#L1243
-        ndim, = read('i')
+    def read_tensor_generic(reader, version):
+        # source:
+        # https://github.com/torch/torch7/blob/master/generic/Tensor.c#L1243
+        ndim = reader.read_int()
 
         # read size:
         arr = array('l')
-        arr.fromfile(f, ndim)
+        arr.fromfile(reader.f, ndim)
         size = arr.tolist()
         # read stride:
         arr = array('l')
-        arr.fromfile(f, ndim)
+        arr.fromfile(reader.f, ndim)
         stride = arr.tolist()
         # storage offset:
-        storage_offset = read('l')[0] - 1
+        storage_offset = reader.read_long() - 1
         # read storage:
-        storage = read_obj()
-
-        # DEBUG:
-        print(ndim, size, stride, storage_offset, storage)
+        storage = reader.read_obj()
 
         if storage is None or ndim == 0 or len(size) == 0 or len(stride) == 0:
             # empty torch tensor
@@ -94,159 +98,227 @@ def add_tensor_reader(typename, dtype):
 
         # create numpy array that indexes into the storage:
         return np.lib.stride_tricks.as_strided(
-                storage[storage_offset:],
-                shape=size,
-                strides=stride)
+            storage[storage_offset:],
+            shape=size,
+            strides=stride)
     torch_readers[typename] = read_tensor_generic
-add_tensor_reader('torch.ByteTensor', dtype=np.uint8)
-add_tensor_reader('torch.CharTensor', dtype=np.int8)
-add_tensor_reader('torch.ShortTensor', dtype=np.int16)
-add_tensor_reader('torch.IntTensor', dtype=np.int32)
-add_tensor_reader('torch.FloatTensor', dtype=np.float32)
-add_tensor_reader('torch.DoubleTensor', dtype=np.float64)
-add_tensor_reader('torch.CudaTensor', np.float32)  # float
+add_tensor_reader(b'torch.ByteTensor', dtype=np.uint8)
+add_tensor_reader(b'torch.CharTensor', dtype=np.int8)
+add_tensor_reader(b'torch.ShortTensor', dtype=np.int16)
+add_tensor_reader(b'torch.IntTensor', dtype=np.int32)
+add_tensor_reader(b'torch.FloatTensor', dtype=np.float32)
+add_tensor_reader(b'torch.DoubleTensor', dtype=np.float64)
+add_tensor_reader(b'torch.CudaTensor', np.float32)  # float
+add_tensor_reader(b'torch.CudaByteTensor', dtype=np.uint8)
+add_tensor_reader(b'torch.CudaCharTensor', dtype=np.int8)
+add_tensor_reader(b'torch.CudaShortTensor', dtype=np.int16)
+add_tensor_reader(b'torch.CudaIntTensor', dtype=np.int32)
+add_tensor_reader(b'torch.CudaDoubleTensor', dtype=np.float64)
 
 
 def add_storage_reader(typename, dtype):
-    def read_storage(f, version):
-        # source: https://github.com/torch/torch7/blob/master/generic/Storage.c#L244
-        size, = read('l')
-        return np.fromfile(f, dtype=dtype, count=size)
+    def read_storage(reader, version):
+        # source:
+        # https://github.com/torch/torch7/blob/master/generic/Storage.c#L244
+        size = reader.read_long()
+        return np.fromfile(reader.f, dtype=dtype, count=size)
     torch_readers[typename] = read_storage
-add_storage_reader('torch.ByteStorage', dtype=np.uint8)
-add_storage_reader('torch.CharStorage', dtype=np.int8)
-add_storage_reader('torch.ShortStorage', dtype=np.int16)
-add_storage_reader('torch.IntStorage', dtype=np.int32)
-add_storage_reader('torch.FloatStorage', dtype=np.float32)
-add_storage_reader('torch.DoubleStorage', dtype=np.float64)
-add_storage_reader('torch.CudaStorage', dtype=np.float32)  # float
+add_storage_reader(b'torch.ByteStorage', dtype=np.uint8)
+add_storage_reader(b'torch.CharStorage', dtype=np.int8)
+add_storage_reader(b'torch.ShortStorage', dtype=np.int16)
+add_storage_reader(b'torch.IntStorage', dtype=np.int32)
+add_storage_reader(b'torch.FloatStorage', dtype=np.float32)
+add_storage_reader(b'torch.DoubleStorage', dtype=np.float64)
+add_storage_reader(b'torch.CudaStorage', dtype=np.float32)  # float
+add_storage_reader(b'torch.CudaByteStorage', dtype=np.uint8)
+add_storage_reader(b'torch.CudaCharStorage', dtype=np.int8)
+add_storage_reader(b'torch.CudaShortStorage', dtype=np.int16)
+add_storage_reader(b'torch.CudaIntStorage', dtype=np.int32)
+add_storage_reader(b'torch.CudaDoubleStorage', dtype=np.float64)
 
 
 def add_trivial_class_reader(typename):
-    def reader(f, version):
-        obj = read_obj()
+    def reader(reader, version):
+        obj = reader.read_obj()
         return TorchObject(typename, obj)
     torch_readers[typename] = reader
-for mod in ["nn.ConcatTable", "nn.SpatialAveragePooling",
-"nn.TemporalConvolutionFB", "nn.BCECriterion", "nn.Reshape", "nn.gModule",
-"nn.SparseLinear", "nn.WeightedLookupTable", "nn.CAddTable",
-"nn.TemporalConvolution", "nn.PairwiseDistance", "nn.WeightedMSECriterion",
-"nn.SmoothL1Criterion", "nn.TemporalSubSampling", "nn.TanhShrink",
-"nn.MixtureTable", "nn.Mul", "nn.LogSoftMax", "nn.Min", "nn.Exp", "nn.Add",
-"nn.BatchNormalization", "nn.AbsCriterion", "nn.MultiCriterion",
-"nn.LookupTableGPU", "nn.Max", "nn.MulConstant", "nn.NarrowTable", "nn.View",
-"nn.ClassNLLCriterionWithUNK", "nn.VolumetricConvolution",
-"nn.SpatialSubSampling", "nn.HardTanh", "nn.DistKLDivCriterion",
-"nn.SplitTable", "nn.DotProduct", "nn.HingeEmbeddingCriterion",
-"nn.SpatialBatchNormalization", "nn.DepthConcat", "nn.Sigmoid",
-"nn.SpatialAdaptiveMaxPooling", "nn.Parallel", "nn.SoftShrink",
-"nn.SpatialSubtractiveNormalization", "nn.TrueNLLCriterion", "nn.Log",
-"nn.SpatialDropout", "nn.LeakyReLU", "nn.VolumetricMaxPooling",
-"nn.KMaxPooling", "nn.Linear", "nn.Euclidean", "nn.CriterionTable",
-"nn.SpatialMaxPooling", "nn.TemporalKMaxPooling", "nn.MultiMarginCriterion",
-"nn.ELU", "nn.CSubTable", "nn.MultiLabelMarginCriterion", "nn.Copy",
-"nn.CuBLASWrapper", "nn.L1HingeEmbeddingCriterion",
-"nn.VolumetricAveragePooling", "nn.StochasticGradient",
-"nn.SpatialContrastiveNormalization", "nn.CosineEmbeddingCriterion",
-"nn.CachingLookupTable", "nn.FeatureLPPooling", "nn.Padding", "nn.Container",
-"nn.MarginRankingCriterion", "nn.Module", "nn.ParallelCriterion",
-"nn.DataParallelTable", "nn.Concat", "nn.CrossEntropyCriterion",
-"nn.LookupTable", "nn.SpatialSoftMax", "nn.HardShrink", "nn.Abs", "nn.SoftMin",
-"nn.WeightedEuclidean", "nn.Replicate", "nn.DataParallel",
-"nn.OneBitQuantization", "nn.OneBitDataParallel", "nn.AddConstant", "nn.L1Cost",
-"nn.HSM", "nn.PReLU", "nn.JoinTable", "nn.ClassNLLCriterion", "nn.CMul",
-"nn.CosineDistance", "nn.Index", "nn.Mean", "nn.FFTWrapper", "nn.Dropout",
-"nn.SpatialConvolutionCuFFT", "nn.SoftPlus", "nn.AbstractParallel",
-"nn.SequentialCriterion", "nn.LocallyConnected",
-"nn.SpatialDivisiveNormalization", "nn.L1Penalty", "nn.Threshold", "nn.Power",
-"nn.Sqrt", "nn.MM", "nn.GroupKMaxPooling", "nn.CrossMapNormalization",
-"nn.ReLU", "nn.ClassHierarchicalNLLCriterion", "nn.Optim", "nn.SoftMax",
-"nn.SpatialConvolutionMM", "nn.Cosine", "nn.Clamp", "nn.CMulTable",
-"nn.LogSigmoid", "nn.LinearNB", "nn.TemporalMaxPooling", "nn.MSECriterion",
-"nn.Sum", "nn.SoftSign", "nn.Normalize", "nn.ParallelTable", "nn.FlattenTable",
-"nn.CDivTable", "nn.Tanh", "nn.ModuleFromCriterion", "nn.Square", "nn.Select",
-"nn.GradientReversal", "nn.SpatialFullConvolutionMap", "nn.SpatialConvolution",
-"nn.Criterion", "nn.SpatialConvolutionMap", "nn.SpatialLPPooling",
-"nn.Sequential", "nn.Transpose", "nn.SpatialUpSamplingNearest",
-"nn.SpatialFullConvolution", "nn.ModelParallel", "nn.RReLU",
-"nn.SpatialZeroPadding", "nn.Identity", "nn.Narrow", "nn.MarginCriterion",
-"nn.SelectTable", "nn.VolumetricFullConvolution",
-"nn.SpatialFractionalMaxPooling", "fbnn.ProjectiveGradientNormalization",
-"fbnn.Probe", "fbnn.SparseLinear", "cudnn._Pooling3D",
-"cudnn.VolumetricMaxPooling", "cudnn.SpatialCrossEntropyCriterion",
-"cudnn.VolumetricConvolution", "cudnn.SpatialAveragePooling", "cudnn.Tanh",
-"cudnn.LogSoftMax", "cudnn.SpatialConvolution", "cudnn._Pooling",
-"cudnn.SpatialMaxPooling", "cudnn.ReLU", "cudnn.SpatialCrossMapLRN",
-"cudnn.SoftMax", "cudnn._Pointwise", "cudnn.SpatialSoftMax", "cudnn.Sigmoid",
-"cudnn.SpatialLogSoftMax", "cudnn.VolumetricAveragePooling", "nngraph.Node",
-"nngraph.JustTable", "graph.Edge", "graph.Node", "graph.Graph"]:
+for mod in [b"nn.ConcatTable", b"nn.SpatialAveragePooling",
+            b"nn.TemporalConvolutionFB", b"nn.BCECriterion", b"nn.Reshape", b"nn.gModule",
+            b"nn.SparseLinear", b"nn.WeightedLookupTable", b"nn.CAddTable",
+            b"nn.TemporalConvolution", b"nn.PairwiseDistance", b"nn.WeightedMSECriterion",
+            b"nn.SmoothL1Criterion", b"nn.TemporalSubSampling", b"nn.TanhShrink",
+            b"nn.MixtureTable", b"nn.Mul", b"nn.LogSoftMax", b"nn.Min", b"nn.Exp", b"nn.Add",
+            b"nn.BatchNormalization", b"nn.AbsCriterion", b"nn.MultiCriterion",
+            b"nn.LookupTableGPU", b"nn.Max", b"nn.MulConstant", b"nn.NarrowTable", b"nn.View",
+            b"nn.ClassNLLCriterionWithUNK", b"nn.VolumetricConvolution",
+            b"nn.SpatialSubSampling", b"nn.HardTanh", b"nn.DistKLDivCriterion",
+            b"nn.SplitTable", b"nn.DotProduct", b"nn.HingeEmbeddingCriterion",
+            b"nn.SpatialBatchNormalization", b"nn.DepthConcat", b"nn.Sigmoid",
+            b"nn.SpatialAdaptiveMaxPooling", b"nn.Parallel", b"nn.SoftShrink",
+            b"nn.SpatialSubtractiveNormalization", b"nn.TrueNLLCriterion", b"nn.Log",
+            b"nn.SpatialDropout", b"nn.LeakyReLU", b"nn.VolumetricMaxPooling",
+            b"nn.KMaxPooling", b"nn.Linear", b"nn.Euclidean", b"nn.CriterionTable",
+            b"nn.SpatialMaxPooling", b"nn.TemporalKMaxPooling", b"nn.MultiMarginCriterion",
+            b"nn.ELU", b"nn.CSubTable", b"nn.MultiLabelMarginCriterion", b"nn.Copy",
+            b"nn.CuBLASWrapper", b"nn.L1HingeEmbeddingCriterion",
+            b"nn.VolumetricAveragePooling", b"nn.StochasticGradient",
+            b"nn.SpatialContrastiveNormalization", b"nn.CosineEmbeddingCriterion",
+            b"nn.CachingLookupTable", b"nn.FeatureLPPooling", b"nn.Padding", b"nn.Container",
+            b"nn.MarginRankingCriterion", b"nn.Module", b"nn.ParallelCriterion",
+            b"nn.DataParallelTable", b"nn.Concat", b"nn.CrossEntropyCriterion",
+            b"nn.LookupTable", b"nn.SpatialSoftMax", b"nn.HardShrink", b"nn.Abs", b"nn.SoftMin",
+            b"nn.WeightedEuclidean", b"nn.Replicate", b"nn.DataParallel",
+            b"nn.OneBitQuantization", b"nn.OneBitDataParallel", b"nn.AddConstant", b"nn.L1Cost",
+            b"nn.HSM", b"nn.PReLU", b"nn.JoinTable", b"nn.ClassNLLCriterion", b"nn.CMul",
+            b"nn.CosineDistance", b"nn.Index", b"nn.Mean", b"nn.FFTWrapper", b"nn.Dropout",
+            b"nn.SpatialConvolutionCuFFT", b"nn.SoftPlus", b"nn.AbstractParallel",
+            b"nn.SequentialCriterion", b"nn.LocallyConnected",
+            b"nn.SpatialDivisiveNormalization", b"nn.L1Penalty", b"nn.Threshold", b"nn.Power",
+            b"nn.Sqrt", b"nn.MM", b"nn.GroupKMaxPooling", b"nn.CrossMapNormalization",
+            b"nn.ReLU", b"nn.ClassHierarchicalNLLCriterion", b"nn.Optim", b"nn.SoftMax",
+            b"nn.SpatialConvolutionMM", b"nn.Cosine", b"nn.Clamp", b"nn.CMulTable",
+            b"nn.LogSigmoid", b"nn.LinearNB", b"nn.TemporalMaxPooling", b"nn.MSECriterion",
+            b"nn.Sum", b"nn.SoftSign", b"nn.Normalize", b"nn.ParallelTable", b"nn.FlattenTable",
+            b"nn.CDivTable", b"nn.Tanh", b"nn.ModuleFromCriterion", b"nn.Square", b"nn.Select",
+            b"nn.GradientReversal", b"nn.SpatialFullConvolutionMap", b"nn.SpatialConvolution",
+            b"nn.Criterion", b"nn.SpatialConvolutionMap", b"nn.SpatialLPPooling",
+            b"nn.Sequential", b"nn.Transpose", b"nn.SpatialUpSamplingNearest",
+            b"nn.SpatialFullConvolution", b"nn.ModelParallel", b"nn.RReLU",
+            b"nn.SpatialZeroPadding", b"nn.Identity", b"nn.Narrow", b"nn.MarginCriterion",
+            b"nn.SelectTable", b"nn.VolumetricFullConvolution",
+            b"nn.SpatialFractionalMaxPooling", b"fbnn.ProjectiveGradientNormalization",
+            b"fbnn.Probe", b"fbnn.SparseLinear", b"cudnn._Pooling3D",
+            b"cudnn.VolumetricMaxPooling", b"cudnn.SpatialCrossEntropyCriterion",
+            b"cudnn.VolumetricConvolution", b"cudnn.SpatialAveragePooling", b"cudnn.Tanh",
+            b"cudnn.LogSoftMax", b"cudnn.SpatialConvolution", b"cudnn._Pooling",
+            b"cudnn.SpatialMaxPooling", b"cudnn.ReLU", b"cudnn.SpatialCrossMapLRN",
+            b"cudnn.SoftMax", b"cudnn._Pointwise", b"cudnn.SpatialSoftMax", b"cudnn.Sigmoid",
+            b"cudnn.SpatialLogSoftMax", b"cudnn.VolumetricAveragePooling", b"nngraph.Node",
+            b"nngraph.JustTable", b"graph.Edge", b"graph.Node", b"graph.Graph"]:
     add_trivial_class_reader(mod)
 
 
-f = open(filename, 'rb')
-objects = {}  # read objects so far
-def read(fmt):
-    sz = struct.calcsize(fmt)
-    return struct.unpack(fmt, f.read(sz))
+class T7ReaderException(Exception):
+    pass
 
-def read_obj():
-    typeidx, = read('i')
-    if typeidx == TYPE_NIL:
-        return None
-    elif typeidx == TYPE_NUMBER:
-        return read('d')[0]
-    elif typeidx == TYPE_BOOLEAN:
-        return read('i')[0] == 1
-    elif typeidx == TYPE_STRING:
-        size, = read('i')
-        return f.read(size)
-    elif (typeidx == TYPE_TABLE or typeidx == TYPE_TORCH
-            or typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION 
-            or typeidx == LEGACY_TYPE_RECUR_FUNCTION):
-        # read the index
-        index, = read('i')
 
-        # check it is loaded already
-        if index in objects:  # TODO: what is force?
-            return objects[index]
+class T7Reader:
 
-        # otherwise read it
-        if (typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION 
+    def __init__(self,
+                 fileobj,
+                 enable_list_heuristic=True,
+                 enable_int_conversion_heuristic=True):
+        self.f = fileobj
+        self.objects = {}  # read objects so far
+
+        self.enable_list_heuristic = enable_list_heuristic
+        self.enable_int_conversion_heuristic = enable_int_conversion_heuristic
+
+    def _read(self, fmt):
+        sz = struct.calcsize(fmt)
+        return struct.unpack(fmt, self.f.read(sz))
+
+    def read_boolean(self):
+        return self.read_int() == 1
+
+    def read_int(self):
+        return self._read('i')[0]
+
+    def read_long(self):
+        return self._read('l')[0]
+
+    def read_float(self):
+        return self._read('f')[0]
+
+    def read_double(self):
+        return self._read('d')[0]
+
+    def read_string(self):
+        size = self.read_int()
+        return self.f.read(size)
+
+    def read_obj(self):
+        typeidx = self.read_int()
+        if typeidx == TYPE_NIL:
+            return None
+        elif typeidx == TYPE_NUMBER:
+            x = self.read_double()
+            # Extra checking for integral numbers:
+            if self.enable_int_conversion_heuristic and x.is_integer():
+                return int(x)
+            return x
+        elif typeidx == TYPE_BOOLEAN:
+            return self.read_boolean()
+        elif typeidx == TYPE_STRING:
+            return self.read_string()
+        elif (typeidx == TYPE_TABLE or typeidx == TYPE_TORCH
+                or typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION
                 or typeidx == LEGACY_TYPE_RECUR_FUNCTION):
-            size, = read('i')
-            dumped = f.read(size)
-            upvalues = read_obj()
-            obj = LuaFunction(size, dumped, upvalues)
-            objects[index] = obj
-            return obj
-        elif typeidx == TYPE_TORCH:
-            version = f.read(read('i')[0])
-            try:
-                versionNumber = int(re.match(r'^V (.*)$', version).group(1))
-            except:
-                versionNumber = None
-            if not versionNumber:
-                className = version
-                versionNumber = 0  # created before existence of versioning
-            else:
-                className = f.read(read('i')[0])
-            if className not in torch_readers:
-                raise Exception('unsupported torch class: <%s>' % className)
-            print('reading type: '+className)  # TODO: remove line
-            obj = torch_readers[className](f, version)
-            objects[index] = obj
-            return obj
-        else:  # it is a table
-            size, = read('i')
-            obj = hashable_uniq_dict()  # custom hashable dict, can be a key
-            objects[index] = obj
-            for i in range(size):
-                k = read_obj()
-                v = read_obj()
-                obj[k] = v
-            return obj
-    else:
-        raise Exception("unknown object")
+            # read the index
+            index = self.read_int()
 
-print(read_obj())
+            # check it is loaded already
+            if index in self.objects:
+                return self.objects[index]
 
+            # otherwise read it
+            if (typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION
+                    or typeidx == LEGACY_TYPE_RECUR_FUNCTION):
+                size = self.read_int()
+                dumped = self.f.read(size)
+                upvalues = self.read_obj()
+                obj = LuaFunction(size, dumped, upvalues)
+                self.objects[index] = obj
+                return obj
+            elif typeidx == TYPE_TORCH:
+                version = self.read_string()
+                if version.startswith(b'V '):
+                    versionNumber = int(version.partition(b' ')[2])
+                    className = self.read_string()
+                else:
+                    className = version
+                    versionNumber = 0  # created before existence of versioning
+                if className not in torch_readers:
+                    raise T7ReaderException(
+                        'unsupported torch class: <%s>' % className)
+                obj = torch_readers[className](self, version)
+                self.objects[index] = obj
+                return obj
+            else:  # it is a table: returns a custom dict or a list
+                size = self.read_int()
+                obj = hashable_uniq_dict()  # custom hashable dict, can be a key
+                key_sum = 0                # for checking if keys are consecutive
+                keys_natural = True        # and also natural numbers 1..n.
+                # If so, returns a list with indices converted to 0-indices.
+                for i in range(size):
+                    k = self.read_obj()
+                    v = self.read_obj()
+                    obj[k] = v
+
+                    if self.enable_list_heuristic:
+                        if not isinstance(k, int) or k <= 0:
+                            keys_natural = False
+                        elif isinstance(k, int):
+                            key_sum += k
+                if self.enable_list_heuristic:
+                    # n(n+1)/2 = sum <=> consecutive and natural numbers
+                    n = len(obj)
+                    if keys_natural and n * (n + 1) == 2 * key_sum:
+                        lst = []
+                        for i in range(len(obj)):
+                            lst.append(obj[i + 1])
+                        obj = lst
+                self.objects[index] = obj
+                return obj
+        else:
+            raise T7ReaderException("unknown object")
+
+
+def load(filename, **kwargs):
+    """
+    Loads the given t7 file using default settings; kwargs are forwarded
+    to `T7Reader`.
+    """
+    with open(filename, 'rb') as f:
+        reader = T7Reader(f, **kwargs)
+        return reader.read_obj()
