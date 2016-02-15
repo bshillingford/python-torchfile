@@ -19,8 +19,8 @@ format, but minor refactoring can give support for the ascii format as well.
    numeric keys from 1 through n) they become a python list by default
  * Torch classes: supports Tensors and Storages, and most classes such as 
    modules. Trivially extensible much like the Torch serialization code.
-   Trivial torch classes like most `nn.Module` subclasses become `TorchObject`
-   `namedtuple`s. The `torch_readers` dict contains the mapping from class
+   Trivial torch classes like most `nn.Module` subclasses become 
+   `TorchObject`s. The `torch_readers` dict contains the mapping from class
    names to reading functions.
  * functions: loaded into the `LuaFunction` `namedtuple`,
    which simply wraps the raw serialized data, i.e. upvalues and code.

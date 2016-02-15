@@ -13,8 +13,8 @@ Supported types:
    numeric keys from 1 through n) they become a python list by default
  * Torch classes: supports Tensors and Storages, and most classes such as 
    modules. Trivially extensible much like the Torch serialization code.
-   Trivial torch classes like most `nn.Module` subclasses become `TorchObject`
-   `namedtuple`s. The `torch_readers` dict contains the mapping from class
+   Trivial torch classes like most `nn.Module` subclasses become 
+   `TorchObject`s. The `torch_readers` dict contains the mapping from class
    names to reading functions.
  * functions: loaded into the `LuaFunction` `namedtuple`,
    which simply wraps the raw serialized data, i.e. upvalues and code.
@@ -41,12 +41,10 @@ LEGACY_TYPE_RECUR_FUNCTION = 7
 
 import struct
 from array import array
-import re
 import numpy as np
 import sys
 from collections import namedtuple
 
-TorchObject = namedtuple('TorchObject', ['typename', 'obj'])
 LuaFunction = namedtuple('LuaFunction',
                          ['size', 'dumped', 'upvalues'])
 
@@ -57,11 +55,16 @@ class hashable_uniq_dict(dict):
     equality and hashing is purely by reference/instance, to match
     the behaviour of lua tables.
 
+    Supports lua-style dot indexing.
+
     This way, dicts can be keys of other dicts.
     """
 
     def __hash__(self):
         return id(self)
+
+    def __getattr__(self, key):
+        return self.get(key)
 
     def __eq__(self, other):
         return id(self) == id(other)
@@ -91,7 +94,7 @@ def add_tensor_reader(typename, dtype):
 
         if storage is None or ndim == 0 or len(size) == 0 or len(stride) == 0:
             # empty torch tensor
-            return np.empty((), dtype=dtype)
+            return np.empty((0), dtype=dtype)
 
         # convert stride to numpy style (i.e. in bytes)
         stride = [storage.dtype.itemsize * x for x in stride]
@@ -135,6 +138,41 @@ add_storage_reader(b'torch.CudaCharStorage', dtype=np.int8)
 add_storage_reader(b'torch.CudaShortStorage', dtype=np.int16)
 add_storage_reader(b'torch.CudaIntStorage', dtype=np.int32)
 add_storage_reader(b'torch.CudaDoubleStorage', dtype=np.float64)
+
+
+class TorchObject(object):
+    """
+    Simple torch object, used by `add_trivial_class_reader`.
+    Supports both forms of lua-style indexing, i.e. getattr and getitem.
+    Use the `torch_typename` method to get the object's torch class name.
+
+    Equality is by reference, as usual for lua (and the default for Python
+    objects).
+    """
+
+    def __init__(self, typename, obj):
+        self._typename = typename
+        self._obj = obj
+
+    def __getattr__(self, k):
+        return self._obj.get(k)
+
+    def __getitem__(self, k):
+        return self._obj.get(k)
+
+    def torch_typename(self):
+        return self._typename
+
+    def __repr__(self):
+        return "TorchObject(%s, %s)" % (self._typename, repr(self._obj))
+
+    def __str__(self):
+        return repr(self)
+
+    def __dir__(self):
+        keys = list(self._obj.keys())
+        keys.append('torch_typename')
+        return keys
 
 
 def add_trivial_class_reader(typename):
