@@ -246,13 +246,26 @@ class T7Reader:
 
     def __init__(self,
                  fileobj,
-                 enable_list_heuristic=True,
-                 enable_int_conversion_heuristic=True):
+                 use_list_heuristic=True,
+                 use_int_heuristic=True,
+                 force_deserialize_classes=True):
+        """
+        Params:
+        * `fileobj` file object to read from, must be actual file object
+                    as it must support array, struct, and numpy
+        * `use_list_heuristic`: automatically turn tables with only consecutive
+                                positive integral indices into lists
+                                (default True)
+        * `use_int_heuristic`: cast all whole floats into ints (default True)
+        * `force_deserialize_classes`: deserialize all classes, not just the
+                                       whitelisted ones (default True)
+        """
         self.f = fileobj
         self.objects = {}  # read objects so far
 
-        self.enable_list_heuristic = enable_list_heuristic
-        self.enable_int_conversion_heuristic = enable_int_conversion_heuristic
+        self.use_list_heuristic = use_list_heuristic
+        self.use_int_heuristic = use_int_heuristic
+        self.force_deserialize_classes = force_deserialize_classes
 
     def _read(self, fmt):
         sz = struct.calcsize(fmt)
@@ -284,7 +297,7 @@ class T7Reader:
         elif typeidx == TYPE_NUMBER:
             x = self.read_double()
             # Extra checking for integral numbers:
-            if self.enable_int_conversion_heuristic and x.is_integer():
+            if self.use_int_heuristic and x.is_integer():
                 return int(x)
             return x
         elif typeidx == TYPE_BOOLEAN:
@@ -319,8 +332,10 @@ class T7Reader:
                     className = version
                     versionNumber = 0  # created before existence of versioning
                 if className not in torch_readers:
-                    raise T7ReaderException(
-                        'unsupported torch class: <%s>' % className)
+                    if not self.force_deserialize_classes:
+                        raise T7ReaderException(
+                            'unsupported torch class: <%s>' % className)
+                    obj = TorchObject(className, reader.read_obj())
                 obj = torch_readers[className](self, version)
                 self.objects[index] = obj
                 return obj
@@ -335,12 +350,12 @@ class T7Reader:
                     v = self.read_obj()
                     obj[k] = v
 
-                    if self.enable_list_heuristic:
+                    if self.use_list_heuristic:
                         if not isinstance(k, int) or k <= 0:
                             keys_natural = False
                         elif isinstance(k, int):
                             key_sum += k
-                if self.enable_list_heuristic:
+                if self.use_list_heuristic:
                     # n(n+1)/2 = sum <=> consecutive and natural numbers
                     n = len(obj)
                     if keys_natural and n * (n + 1) == 2 * key_sum:
