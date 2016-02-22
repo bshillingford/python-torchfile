@@ -335,8 +335,9 @@ class T7Reader:
                     if not self.force_deserialize_classes:
                         raise T7ReaderException(
                             'unsupported torch class: <%s>' % className)
-                    obj = TorchObject(className, reader.read_obj())
-                obj = torch_readers[className](self, version)
+                    obj = TorchObject(className, self.read_obj())
+                else:
+                    obj = torch_readers[className](self, version)
                 self.objects[index] = obj
                 return obj
             else:  # it is a table: returns a custom dict or a list
