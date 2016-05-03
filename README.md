@@ -6,7 +6,14 @@ and `struct`). Sharing of objects including `torch.Tensor`s is preserved.
 
 
 ## Installation:
-`python setup.py install`
+Install from PyPI:
+```sh
+pip install torchfile
+```
+or clone this repository, then:
+```sh
+python setup.py install
+```
 
 Supports Python 2.7+ and Python 3 (tested on 3.4.2).
 
@@ -125,3 +132,4 @@ The example `t7` files will work on any modern Intel or AMD 64-bit CPU, but the
 code will use the native byte ordering etc. Currently, the implementation 
 assumes the system-dependent binary Torch format, but minor refactoring can 
 give support for the ascii format as well.
+
