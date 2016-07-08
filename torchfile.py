@@ -78,7 +78,7 @@ def add_tensor_reader(typename, dtype):
         # source:
         # https://github.com/torch/torch7/blob/master/generic/Tensor.c#L1243
         ndim = reader.read_int()
- 
+
         # read size:
         size = reader.read_long_array(ndim)
         # read stride:
@@ -87,7 +87,7 @@ def add_tensor_reader(typename, dtype):
         storage_offset = reader.read_long() - 1
         # read storage:
         storage = reader.read_obj()
-        
+
         if storage is None or ndim == 0 or len(size) == 0 or len(stride) == 0:
             # empty torch tensor
             return np.empty((0), dtype=dtype)
@@ -346,7 +346,7 @@ class T7Reader:
                 if className not in torch_readers:
                     if not self.force_deserialize_classes:
                         raise T7ReaderException(
-                            'unsupported torch class: <%s>' % className)   
+                            'unsupported torch class: <%s>' % className)
                     obj = TorchObject(className, self.read_obj())
                 else:
                     obj = torch_readers[className](self, version)
