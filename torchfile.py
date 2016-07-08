@@ -78,19 +78,15 @@ def add_tensor_reader(typename, dtype):
         # source:
         # https://github.com/torch/torch7/blob/master/generic/Tensor.c#L1243
         ndim = reader.read_int()
-        print 'reading tensor', typename, 'ndim=', ndim 
+ 
         # read size:
         size = reader.read_long_array(ndim)
-        print 'reading tensor', typename, 'size=', size 
         # read stride:
         stride = reader.read_long_array(ndim)
-        print 'reading tensor', typename, 'stride=', stride 
         # storage offset:
         storage_offset = reader.read_long() - 1
-        print 'reading tensor', typename, 'storage_offset=', storage_offset
         # read storage:
         storage = reader.read_obj()
-        print 'reading tensor', typename, 'storage=', storage
         
         if storage is None or ndim == 0 or len(size) == 0 or len(stride) == 0:
             # empty torch tensor
@@ -350,24 +346,20 @@ class T7Reader:
                 if className not in torch_readers:
                     if not self.force_deserialize_classes:
                         raise T7ReaderException(
-                            'unsupported torch class: <%s>' % className)
-                    print 'reading TorchObject', className, 'version=', version, 'at index', index      
+                            'unsupported torch class: <%s>' % className)   
                     obj = TorchObject(className, self.read_obj())
                 else:
-                    print 'reading torch_readers', className, 'version=', version, 'at index', index
                     obj = torch_readers[className](self, version)
                 self.objects[index] = obj
                 return obj
             else:  # it is a table: returns a custom dict or a list
                 size = self.read_int()
-                print 'reading table', 'size=', size, 'at index', index
                 obj = hashable_uniq_dict()  # custom hashable dict, can be a key
                 key_sum = 0                # for checking if keys are consecutive
                 keys_natural = True        # and also natural numbers 1..n.
                 # If so, returns a list with indices converted to 0-indices.
                 for i in range(size):
                     k = self.read_obj()
-                    print 'reading table key', k
                     v = self.read_obj()
                     obj[k] = v
 
