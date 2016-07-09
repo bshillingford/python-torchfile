@@ -80,13 +80,9 @@ def add_tensor_reader(typename, dtype):
         ndim = reader.read_int()
 
         # read size:
-        arr = array('l')
-        arr.fromfile(reader.f, ndim)
-        size = arr.tolist()
+        size = reader.read_long_array(ndim)
         # read stride:
-        arr = array('l')
-        arr.fromfile(reader.f, ndim)
-        stride = arr.tolist()
+        stride = reader.read_long_array(ndim)
         # storage offset:
         storage_offset = reader.read_long() - 1
         # read storage:
@@ -248,7 +244,8 @@ class T7Reader:
                  fileobj,
                  use_list_heuristic=True,
                  use_int_heuristic=True,
-                 force_deserialize_classes=True):
+                 force_deserialize_classes=True,
+                 force_8bytes_long=False):
         """
         Params:
         * `fileobj` file object to read from, must be actual file object
@@ -266,6 +263,7 @@ class T7Reader:
         self.use_list_heuristic = use_list_heuristic
         self.use_int_heuristic = use_int_heuristic
         self.force_deserialize_classes = force_deserialize_classes
+        self.force_8bytes_long = force_8bytes_long
 
     def _read(self, fmt):
         sz = struct.calcsize(fmt)
@@ -278,8 +276,22 @@ class T7Reader:
         return self._read('i')[0]
 
     def read_long(self):
-        return self._read('l')[0]
+        if self.force_8bytes_long:
+            return self._read('q')[0]
+        else:
+            return self._read('l')[0]
 
+    def read_long_array(self, n):
+        if self.force_8bytes_long:
+            lst = []
+            for i in xrange(n):
+                lst.append(self.read_long())
+            return lst
+        else:
+            arr = array('l')
+            arr.fromfile(self.f, n)
+            return arr.tolist()       
+    
     def read_float(self):
         return self._read('f')[0]
 
