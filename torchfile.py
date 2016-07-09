@@ -245,7 +245,7 @@ class T7Reader:
                  use_list_heuristic=True,
                  use_int_heuristic=True,
                  force_deserialize_classes=True,
-                 use_8bytes_long=True):
+                 force_8bytes_long=False):
         """
         Params:
         * `fileobj` file object to read from, must be actual file object
@@ -263,7 +263,7 @@ class T7Reader:
         self.use_list_heuristic = use_list_heuristic
         self.use_int_heuristic = use_int_heuristic
         self.force_deserialize_classes = force_deserialize_classes
-        self.use_8bytes_long = use_8bytes_long
+        self.force_8bytes_long = force_8bytes_long
 
     def _read(self, fmt):
         sz = struct.calcsize(fmt)
@@ -276,13 +276,13 @@ class T7Reader:
         return self._read('i')[0]
 
     def read_long(self):
-        if self.use_8bytes_long:
+        if self.force_8bytes_long:
             return self._read('q')[0]
         else:
             return self._read('l')[0]
 
     def read_long_array(self, n):
-        if self.use_8bytes_long:
+        if self.force_8bytes_long:
             lst = []
             for i in xrange(n):
                 lst.append(self.read_long())
