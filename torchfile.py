@@ -172,6 +172,18 @@ class TorchObject(object):
         keys.append('torch_typename')
         return keys
 
+def tds_Hash_reader(reader, version):
+    size = reader.read_int()
+    obj = hashable_uniq_dict()
+    _ = reader.read_obj()
+    for i in range(size):
+        k = reader.read_obj()
+        v = reader.read_obj()
+        obj[k] = v
+    return obj
+
+torch_readers[b"tds.Hash"] = tds_Hash_reader
+
 
 def add_trivial_class_reader(typename):
     def reader(reader, version):
