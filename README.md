@@ -106,7 +106,7 @@ False
  * functions: loaded into the `LuaFunction` `namedtuple`,
    which simply wraps the raw serialized data, i.e. upvalues and code.
    These are mostly useless, but exist so you can deserialize anything.
- * tds.Hash
+ * tds.Hash, tds.Vec
 
 (*) Since Lua allows you to index a table with a table but Python does not, we 
     replace dicts with a subclass that is hashable, and change its
