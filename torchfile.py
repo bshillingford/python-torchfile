@@ -361,7 +361,7 @@ class T7Reader:
             elif typeidx == TYPE_TORCH:
                 version = self.read_string()
                 if version.startswith(b'V '):
-                    versionNumber = int(version.partition(b' ')[2])
+                    versionNumber = int(float(version.partition(b' ')[2]))
                     className = self.read_string()
                 else:
                     className = version
