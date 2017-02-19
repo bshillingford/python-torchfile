@@ -1,9 +1,21 @@
 language: python
 python:
   - "2.7"
+  - "3.4"
   - "3.5"
   - "3.6"
-# command to install dependencies
-install: "pip install numpy"
-# command to run tests
-script: python tests.py
+install:
+  - pip install numpy nose coverage python-coveralls
+  - pip install .
+script:
+  - nosetests --with-coverage --cover-package torchfile
+after_success: coveralls
+
+matrix:
+    fast_finish: true
+    include:
+        env: LINT_CHECK
+        python: "2.7"
+        addons: true
+        install: pip install pep8
+        script: pep8 torchfile.py
