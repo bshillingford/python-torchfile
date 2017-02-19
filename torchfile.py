@@ -148,9 +148,10 @@ class TorchObject(object):
     objects).
     """
 
-    def __init__(self, typename, obj):
+    def __init__(self, typename, obj=None, version_number=0):
         self._typename = typename
         self._obj = obj
+        self._version_number = version_number
 
     def __getattr__(self, k):
         return self._obj.get(k)
@@ -194,67 +195,6 @@ def tds_Hash_reader(reader, version):
     return obj
 
 torch_readers[b"tds.Hash"] = tds_Hash_reader
-
-
-def add_trivial_class_reader(typename):
-    def reader(reader, version):
-        obj = reader.read_obj()
-        return TorchObject(typename, obj)
-    torch_readers[typename] = reader
-for mod in [b"nn.ConcatTable", b"nn.SpatialAveragePooling",
-            b"nn.TemporalConvolutionFB", b"nn.BCECriterion", b"nn.Reshape", b"nn.gModule",
-            b"nn.SparseLinear", b"nn.WeightedLookupTable", b"nn.CAddTable",
-            b"nn.TemporalConvolution", b"nn.PairwiseDistance", b"nn.WeightedMSECriterion",
-            b"nn.SmoothL1Criterion", b"nn.TemporalSubSampling", b"nn.TanhShrink",
-            b"nn.MixtureTable", b"nn.Mul", b"nn.LogSoftMax", b"nn.Min", b"nn.Exp", b"nn.Add",
-            b"nn.BatchNormalization", b"nn.AbsCriterion", b"nn.MultiCriterion",
-            b"nn.LookupTableGPU", b"nn.Max", b"nn.MulConstant", b"nn.NarrowTable", b"nn.View",
-            b"nn.ClassNLLCriterionWithUNK", b"nn.VolumetricConvolution",
-            b"nn.SpatialSubSampling", b"nn.HardTanh", b"nn.DistKLDivCriterion",
-            b"nn.SplitTable", b"nn.DotProduct", b"nn.HingeEmbeddingCriterion",
-            b"nn.SpatialBatchNormalization", b"nn.DepthConcat", b"nn.Sigmoid",
-            b"nn.SpatialAdaptiveMaxPooling", b"nn.Parallel", b"nn.SoftShrink",
-            b"nn.SpatialSubtractiveNormalization", b"nn.TrueNLLCriterion", b"nn.Log",
-            b"nn.SpatialDropout", b"nn.LeakyReLU", b"nn.VolumetricMaxPooling",
-            b"nn.KMaxPooling", b"nn.Linear", b"nn.Euclidean", b"nn.CriterionTable",
-            b"nn.SpatialMaxPooling", b"nn.TemporalKMaxPooling", b"nn.MultiMarginCriterion",
-            b"nn.ELU", b"nn.CSubTable", b"nn.MultiLabelMarginCriterion", b"nn.Copy",
-            b"nn.CuBLASWrapper", b"nn.L1HingeEmbeddingCriterion",
-            b"nn.VolumetricAveragePooling", b"nn.StochasticGradient",
-            b"nn.SpatialContrastiveNormalization", b"nn.CosineEmbeddingCriterion",
-            b"nn.CachingLookupTable", b"nn.FeatureLPPooling", b"nn.Padding", b"nn.Container",
-            b"nn.MarginRankingCriterion", b"nn.Module", b"nn.ParallelCriterion",
-            b"nn.DataParallelTable", b"nn.Concat", b"nn.CrossEntropyCriterion",
-            b"nn.LookupTable", b"nn.SpatialSoftMax", b"nn.HardShrink", b"nn.Abs", b"nn.SoftMin",
-            b"nn.WeightedEuclidean", b"nn.Replicate", b"nn.DataParallel",
-            b"nn.OneBitQuantization", b"nn.OneBitDataParallel", b"nn.AddConstant", b"nn.L1Cost",
-            b"nn.HSM", b"nn.PReLU", b"nn.JoinTable", b"nn.ClassNLLCriterion", b"nn.CMul",
-            b"nn.CosineDistance", b"nn.Index", b"nn.Mean", b"nn.FFTWrapper", b"nn.Dropout",
-            b"nn.SpatialConvolutionCuFFT", b"nn.SoftPlus", b"nn.AbstractParallel",
-            b"nn.SequentialCriterion", b"nn.LocallyConnected",
-            b"nn.SpatialDivisiveNormalization", b"nn.L1Penalty", b"nn.Threshold", b"nn.Power",
-            b"nn.Sqrt", b"nn.MM", b"nn.GroupKMaxPooling", b"nn.CrossMapNormalization",
-            b"nn.ReLU", b"nn.ClassHierarchicalNLLCriterion", b"nn.Optim", b"nn.SoftMax",
-            b"nn.SpatialConvolutionMM", b"nn.Cosine", b"nn.Clamp", b"nn.CMulTable",
-            b"nn.LogSigmoid", b"nn.LinearNB", b"nn.TemporalMaxPooling", b"nn.MSECriterion",
-            b"nn.Sum", b"nn.SoftSign", b"nn.Normalize", b"nn.ParallelTable", b"nn.FlattenTable",
-            b"nn.CDivTable", b"nn.Tanh", b"nn.ModuleFromCriterion", b"nn.Square", b"nn.Select",
-            b"nn.GradientReversal", b"nn.SpatialFullConvolutionMap", b"nn.SpatialConvolution",
-            b"nn.Criterion", b"nn.SpatialConvolutionMap", b"nn.SpatialLPPooling",
-            b"nn.Sequential", b"nn.Transpose", b"nn.SpatialUpSamplingNearest",
-            b"nn.SpatialFullConvolution", b"nn.ModelParallel", b"nn.RReLU",
-            b"nn.SpatialZeroPadding", b"nn.Identity", b"nn.Narrow", b"nn.MarginCriterion",
-            b"nn.SelectTable", b"nn.VolumetricFullConvolution",
-            b"nn.SpatialFractionalMaxPooling", b"fbnn.ProjectiveGradientNormalization",
-            b"fbnn.Probe", b"fbnn.SparseLinear", b"cudnn._Pooling3D",
-            b"cudnn.VolumetricMaxPooling", b"cudnn.SpatialCrossEntropyCriterion",
-            b"cudnn.VolumetricConvolution", b"cudnn.SpatialAveragePooling", b"cudnn.Tanh",
-            b"cudnn.LogSoftMax", b"cudnn.SpatialConvolution", b"cudnn._Pooling",
-            b"cudnn.SpatialMaxPooling", b"cudnn.ReLU", b"cudnn.SpatialCrossMapLRN",
-            b"cudnn.SoftMax", b"cudnn._Pointwise", b"cudnn.SpatialSoftMax", b"cudnn.Sigmoid",
-            b"cudnn.SpatialLogSoftMax", b"cudnn.VolumetricAveragePooling", b"nngraph.Node",
-            b"nngraph.JustTable", b"graph.Edge", b"graph.Node", b"graph.Graph"]:
-    add_trivial_class_reader(mod)
 
 
 class T7ReaderException(Exception):
@@ -361,27 +301,33 @@ class T7Reader:
             elif typeidx == TYPE_TORCH:
                 version = self.read_string()
                 if version.startswith(b'V '):
-                    versionNumber = int(float(version.partition(b' ')[2]))
-                    className = self.read_string()
+                    version_number = int(float(version.partition(b' ')[2]))
+                    class_name = self.read_string()
                 else:
-                    className = version
-                    versionNumber = 0  # created before existence of versioning
-                if className not in torch_readers:
-                    if not self.force_deserialize_classes:
-                        raise T7ReaderException(
-                            'unsupported torch class: <%s>' % className)
-                    obj = TorchObject(className, self.read_obj())
+                    class_name = version
+                    version_number = 0  # created before existence of versioning
+                if class_name in torch_readers:
+                    # TODO: can custom readers ever be self-referential?
+                    self.objects[index] = None  # FIXME: if self-referential
+                    obj = torch_readers[class_name](self, version)
+                    self.objects[index] = obj
                 else:
-                    obj = torch_readers[className](self, version)
-                self.objects[index] = obj
+                    # This must be performed in two steps to allow objects to be a 
+                    # property of themselves.
+                    obj = TorchObject(class_name, version_number=version_number)
+                    self.objects[index] = obj
+                    obj._obj = self.read_obj()  # After self.objects is populated
                 return obj
             else:  # it is a table: returns a custom dict or a list
                 size = self.read_int()
                 obj = hashable_uniq_dict()  # custom hashable dict, can be a key
-                key_sum = 0                # for checking if keys are consecutive
-                keys_natural = True        # and also natural numbers 1..n.
-                # If so, returns a list with indices converted to 0-indices.
-                for i in range(size):
+                # For checking if keys are consecutive and positive ints;
+                # if so, returns a list with indices converted to 0-indices.
+                key_sum = 0
+                keys_natural = True
+                # bugfix: obj must be registered before reading keys and vals
+                self.objects[index] = obj
+                for _ in range(size):
                     k = self.read_obj()
                     v = self.read_obj()
                     obj[k] = v
@@ -397,9 +343,14 @@ class T7Reader:
                     if keys_natural and n * (n + 1) == 2 * key_sum:
                         lst = []
                         for i in range(len(obj)):
-                            lst.append(obj[i + 1])
-                        obj = lst
-                self.objects[index] = obj
+                            elem = obj[i + 1]
+                            # In case it is self-referential. This is not 
+                            # needed in lua torch since the tables are never
+                            # modified as they are here.
+                            if elem == obj:
+                                elem = lst
+                            lst.append(elem)
+                        self.objects[index] = obj = lst
                 return obj
         else:
             raise T7ReaderException("unknown object")
