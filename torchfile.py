@@ -169,10 +169,17 @@ class TorchObject(object):
         self._version_number = version_number
 
     def __getattr__(self, k):
-        return self._obj.get(k)
+        if k in self._obj:
+            return self._obj[k]
+        # Lua's strings are always byte strings
+        if isinstance(k, (str, bytes)):
+            return self._obj.get(k.encode('utf8'))
 
     def __getitem__(self, k):
-        return self._obj.get(k)
+        if k in self._obj:
+            return self._obj[k]
+        if isinstance(k, (str, bytes)):
+            return self._obj.get(k.encode('utf8'))
 
     def torch_typename(self):
         return self._typename
