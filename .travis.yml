@@ -3,7 +3,10 @@ python:
   - "2.7"
   - "3.5"
   - "3.6"
-# command to install dependencies
-install: "pip install numpy"
-# command to run tests
-script: python tests.py
+install:
+  - pip install numpy nose coverage pep8
+  - pip install .
+script:
+  - nosetests --with-coverage --cover-package torchfile
+  - pep8 torchfile.py
+after_success: coveralls
