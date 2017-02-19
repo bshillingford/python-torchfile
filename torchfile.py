@@ -68,15 +68,21 @@ class hashable_uniq_dict(dict):
 
     def __eq__(self, other):
         return id(self) == id(other)
-    # TODO: dict's __lt__ etc. still exist
+
+    def __ne__(self, other):
+        return id(self) != id(other)
+
+    def _disabled_binop(self, other):
+        raise TypeError(
+            'hashable_uniq_dict does not support these comparisons')
+    __cmp__ = __ne__ = __le__ = __gt__ = __lt__ = _disabled_binop
 
 torch_readers = {}
 
 
 def add_tensor_reader(typename, dtype):
     def read_tensor_generic(reader, version):
-        # source:
-        # https://github.com/torch/torch7/blob/master/generic/Tensor.c#L1243
+        # https://github.com/torch/torch7/blob/1e86025/generic/Tensor.c#L1249
         ndim = reader.read_int()
 
         # read size:
@@ -108,7 +114,7 @@ add_tensor_reader(b'torch.IntTensor', dtype=np.int32)
 add_tensor_reader(b'torch.LongTensor', dtype=np.int64)
 add_tensor_reader(b'torch.FloatTensor', dtype=np.float32)
 add_tensor_reader(b'torch.DoubleTensor', dtype=np.float64)
-add_tensor_reader(b'torch.CudaTensor', np.float32)  # float
+add_tensor_reader(b'torch.CudaTensor', dtype=np.float32)
 add_tensor_reader(b'torch.CudaByteTensor', dtype=np.uint8)
 add_tensor_reader(b'torch.CudaCharTensor', dtype=np.int8)
 add_tensor_reader(b'torch.CudaShortTensor', dtype=np.int16)
@@ -118,8 +124,7 @@ add_tensor_reader(b'torch.CudaDoubleTensor', dtype=np.float64)
 
 def add_storage_reader(typename, dtype):
     def read_storage(reader, version):
-        # source:
-        # https://github.com/torch/torch7/blob/master/generic/Storage.c#L244
+        # https://github.com/torch/torch7/blob/1e86025/generic/Storage.c#L237
         size = reader.read_long()
         return np.fromfile(reader.f, dtype=dtype, count=size)
     torch_readers[typename] = read_storage
@@ -130,12 +135,22 @@ add_storage_reader(b'torch.IntStorage', dtype=np.int32)
 add_storage_reader(b'torch.LongStorage', dtype=np.int64)
 add_storage_reader(b'torch.FloatStorage', dtype=np.float32)
 add_storage_reader(b'torch.DoubleStorage', dtype=np.float64)
-add_storage_reader(b'torch.CudaStorage', dtype=np.float32)  # float
+add_storage_reader(b'torch.CudaStorage', dtype=np.float32)
 add_storage_reader(b'torch.CudaByteStorage', dtype=np.uint8)
 add_storage_reader(b'torch.CudaCharStorage', dtype=np.int8)
 add_storage_reader(b'torch.CudaShortStorage', dtype=np.int16)
 add_storage_reader(b'torch.CudaIntStorage', dtype=np.int32)
 add_storage_reader(b'torch.CudaDoubleStorage', dtype=np.float64)
+
+
+def add_notimpl_reader(typename):
+    def read_notimpl(reader, version):
+        raise NotImplementedError('Reader not implemented for: ' + typename)
+    torch_readers[typename] = read_notimpl
+add_notimpl_reader(b'torch.HalfTensor')
+add_notimpl_reader(b'torch.HalfStorage')
+add_notimpl_reader(b'torch.CudaHalfTensor')
+add_notimpl_reader(b'torch.CudaHalfStorage')
 
 
 class TorchObject(object):
@@ -209,25 +224,28 @@ class T7Reader:
                  fileobj,
                  use_list_heuristic=True,
                  use_int_heuristic=True,
-                 force_deserialize_classes=True,
+                 force_deserialize_classes=None,
                  force_8bytes_long=False):
         """
         Params:
-        * `fileobj` file object to read from, must be actual file object
-                    as it must support array, struct, and numpy
+        * `fileobj`: file object to read from, must be an actual file object
+                    as it will be read by `array`, `struct`, and `numpy`. Since
+                    it is only read sequentially, certain objects like pipes or
+                    `sys.stdin` should work as well (untested).
         * `use_list_heuristic`: automatically turn tables with only consecutive
                                 positive integral indices into lists
                                 (default True)
         * `use_int_heuristic`: cast all whole floats into ints (default True)
-        * `force_deserialize_classes`: deserialize all classes, not just the
-                                       whitelisted ones (default True)
+        * `force_deserialize_classes`: deprecated.
         """
         self.f = fileobj
         self.objects = {}  # read objects so far
 
+        if force_deserialize_classes is not None:
+            raise DeprecationWarning('force_deserialize_classes is now always '
+                                     'forced to be true, so no longer required')
         self.use_list_heuristic = use_list_heuristic
         self.use_int_heuristic = use_int_heuristic
-        self.force_deserialize_classes = force_deserialize_classes
         self.force_8bytes_long = force_8bytes_long
 
     def _read(self, fmt):
@@ -269,22 +287,27 @@ class T7Reader:
 
     def read_obj(self):
         typeidx = self.read_int()
+
         if typeidx == TYPE_NIL:
             return None
+
         elif typeidx == TYPE_NUMBER:
             x = self.read_double()
             # Extra checking for integral numbers:
             if self.use_int_heuristic and x.is_integer():
                 return int(x)
             return x
+
         elif typeidx == TYPE_BOOLEAN:
             return self.read_boolean()
+
         elif typeidx == TYPE_STRING:
             return self.read_string()
+
         elif (typeidx == TYPE_TABLE or typeidx == TYPE_TORCH
                 or typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION
                 or typeidx == LEGACY_TYPE_RECUR_FUNCTION):
-            # read the index
+            # read the object reference index
             index = self.read_int()
 
             # check it is loaded already
@@ -300,6 +323,7 @@ class T7Reader:
                 obj = LuaFunction(size, dumped, upvalues)
                 self.objects[index] = obj
                 return obj
+
             elif typeidx == TYPE_TORCH:
                 version = self.read_string()
                 if version.startswith(b'V '):
@@ -321,6 +345,7 @@ class T7Reader:
                     self.objects[index] = obj
                     obj._obj = self.read_obj()  # After self.objects is populated
                 return obj
+
             else:  # it is a table: returns a custom dict or a list
                 size = self.read_int()
                 obj = hashable_uniq_dict()  # custom hashable dict, can be a key
@@ -330,6 +355,7 @@ class T7Reader:
                 keys_natural = True
                 # bugfix: obj must be registered before reading keys and vals
                 self.objects[index] = obj
+
                 for _ in range(size):
                     k = self.read_obj()
                     v = self.read_obj()
@@ -340,6 +366,7 @@ class T7Reader:
                             keys_natural = False
                         elif isinstance(k, int):
                             key_sum += k
+
                 if self.use_list_heuristic:
                     # n(n+1)/2 = sum <=> consecutive and natural numbers
                     n = len(obj)
@@ -354,9 +381,12 @@ class T7Reader:
                                 elem = lst
                             lst.append(elem)
                         self.objects[index] = obj = lst
+
                 return obj
+
         else:
-            raise T7ReaderException("unknown object")
+            raise T7ReaderException(
+                "unknown object type / typeidx: {}".format(typeidx))
 
 
 def load(filename, **kwargs):
