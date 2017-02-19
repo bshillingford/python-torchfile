@@ -1,10 +1,15 @@
 # Torch serialization reader for Python
 [![Build Status](https://travis-ci.org/bshillingford/python-torchfile.svg?branch=master)](https://travis-ci.org/bshillingford/python-torchfile)
+[![Coverage Status](https://coveralls.io/repos/github/bshillingford/python-torchfile/badge.svg)](https://coveralls.io/github/bshillingford/python-torchfile)
 
 Mostly direct port of the torch7 Lua and C serialization implementation to 
 Python, depending only on `numpy` (and the standard library: `array` 
 and `struct`). Sharing of objects including `torch.Tensor`s is preserved.
 
+```python
+import torchfile
+stuff = torchfile.load('a_bunch_of_stuff.t7')
+```
 
 ## Installation:
 Install from [PyPI](https://pypi.python.org/pypi/torchfile/0.0.2):
@@ -18,7 +23,7 @@ python setup.py install
 
 Supports Python 2.7, 3.4, 3.5, 3.6. Probably others too.
 
-## Example:
+## More examples:
 ### Write from torch, read from Python:
 Lua:
 ```lua
