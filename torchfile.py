@@ -173,6 +173,7 @@ class TorchObject(object):
         keys.append('torch_typename')
         return keys
 
+
 def tds_Vec_reader(reader, version):
     size = reader.read_int()
     obj = []
@@ -183,6 +184,7 @@ def tds_Vec_reader(reader, version):
     return obj
 
 torch_readers[b"tds.Vec"] = tds_Vec_reader
+
 
 def tds_Hash_reader(reader, version):
     size = reader.read_int()
@@ -253,8 +255,8 @@ class T7Reader:
         else:
             arr = array('l')
             arr.fromfile(self.f, n)
-            return arr.tolist()       
-    
+            return arr.tolist()
+
     def read_float(self):
         return self._read('f')[0]
 
@@ -312,9 +314,10 @@ class T7Reader:
                     obj = torch_readers[class_name](self, version)
                     self.objects[index] = obj
                 else:
-                    # This must be performed in two steps to allow objects to be a 
+                    # This must be performed in two steps to allow objects to be a
                     # property of themselves.
-                    obj = TorchObject(class_name, version_number=version_number)
+                    obj = TorchObject(
+                        class_name, version_number=version_number)
                     self.objects[index] = obj
                     obj._obj = self.read_obj()  # After self.objects is populated
                 return obj
@@ -344,7 +347,7 @@ class T7Reader:
                         lst = []
                         for i in range(len(obj)):
                             elem = obj[i + 1]
-                            # In case it is self-referential. This is not 
+                            # In case it is self-referential. This is not
                             # needed in lua torch since the tables are never
                             # modified as they are here.
                             if elem == obj:
