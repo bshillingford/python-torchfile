@@ -12,11 +12,13 @@ def make_filename(fn):
     TEST_FILE_DIRECTORY = 'testfiles_x86_64'
     return os.path.join(TEST_FILE_DIRECTORY, fn)
 
+
 def load(fn, **kwargs):
     return torchfile.load(make_filename(fn), **kwargs)
 
 
 class TestBasics(unittest.TestCase):
+
     def test_dict(self):
         obj = load('hello=123.t7')
         self.assertEqual(dict(obj), {b'hello': 123})
@@ -34,8 +36,8 @@ class TestBasics(unittest.TestCase):
 
     def test_basic_tensors(self):
         f64 = load('doubletensor.t7')
-        self.assertTrue((f64 == np.array([[1,2,3,], [4,5,6.9]],
-            dtype=np.float64)).all())
+        self.assertTrue((f64 == np.array([[1, 2, 3, ], [4, 5, 6.9]],
+                                         dtype=np.float64)).all())
 
         f32 = load('floattensor.t7')
         self.assertAlmostEqual(f32.sum(), 12.97241666913, delta=1e-5)
@@ -46,19 +48,20 @@ class TestBasics(unittest.TestCase):
 
     def test_dict_accessors(self):
         obj = load('hello=123.t7',
-                use_int_heuristic=True,
-                utf8_decode_strings=True)
+                   use_int_heuristic=True,
+                   utf8_decode_strings=True)
         self.assertIsInstance(obj['hello'], int)
         self.assertIsInstance(obj.hello, int)
 
         obj = load('hello=123.t7',
-                use_int_heuristic=True,
-                utf8_decode_strings=False)
+                   use_int_heuristic=True,
+                   utf8_decode_strings=False)
         self.assertIsInstance(obj[b'hello'], int)
         self.assertIsInstance(obj.hello, int)
 
 
 class TestRecursiveObjects(unittest.TestCase):
+
     def test_recursive_class(self):
         obj = load('recursive_class.t7')
         self.assertEqual(obj.a, obj)
@@ -72,6 +75,7 @@ class TestRecursiveObjects(unittest.TestCase):
 
 
 class TestTDS(unittest.TestCase):
+
     def test_hash(self):
         obj = load('tds_hash.t7')
         self.assertEqual(len(obj), 3)
@@ -85,16 +89,17 @@ class TestTDS(unittest.TestCase):
 
 
 class TestHeuristics(unittest.TestCase):
+
     def test_list_heuristic(self):
         obj = load('list_table.t7', use_list_heuristic=True)
         self.assertEqual(obj, [b'hello', b'world', b'third item', 123])
 
         obj = load('list_table.t7',
-                use_list_heuristic=False,
-                use_int_heuristic=True)
+                   use_list_heuristic=False,
+                   use_int_heuristic=True)
         self.assertEqual(
-                dict(obj),
-                {1: b'hello', 2: b'world', 3: b'third item', 4: 123})
+            dict(obj),
+            {1: b'hello', 2: b'world', 3: b'third item', 4: 123})
 
     def test_int_heuristic(self):
         obj = load('hello=123.t7', use_int_heuristic=True)
@@ -104,14 +109,13 @@ class TestHeuristics(unittest.TestCase):
         self.assertNotIsInstance(obj[b'hello'], int)
 
         obj = load('list_table.t7',
-                use_list_heuristic=False,
-                use_int_heuristic=False)
+                   use_list_heuristic=False,
+                   use_int_heuristic=False)
         self.assertEqual(
-                dict(obj),
-                {1: b'hello', 2: b'world', 3: b'third item', 4: 123})
+            dict(obj),
+            {1: b'hello', 2: b'world', 3: b'third item', 4: 123})
         self.assertNotIsInstance(list(obj.keys())[0], int)
 
 
 if __name__ == '__main__':
     unittest.main()
-

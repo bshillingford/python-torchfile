@@ -125,6 +125,7 @@ class TorchObject(object):
 
 type_handlers = {}
 
+
 def register_handler(typename):
     def do_register(handler):
         type_handlers[typename] = handler
