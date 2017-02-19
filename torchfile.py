@@ -1,5 +1,5 @@
 """
-Mostly direct port of the Lua and C serialization implementation to 
+Mostly direct port of the Lua and C serialization implementation to
 Python, depending only on `struct`, `array`, and numpy.
 
 Supported types:
@@ -11,23 +11,29 @@ Supported types:
    lua strings which don't support unicode, and that can contain null chars
  * tables converted to a special dict (*); if they are list-like (i.e. have
    numeric keys from 1 through n) they become a python list by default
- * Torch classes: supports Tensors and Storages, and most classes such as 
+ * Torch classes: supports Tensors and Storages, and most classes such as
    modules. Trivially extensible much like the Torch serialization code.
-   Trivial torch classes like most `nn.Module` subclasses become 
+   Trivial torch classes like most `nn.Module` subclasses become
    `TorchObject`s. The `torch_readers` dict contains the mapping from class
    names to reading functions.
  * functions: loaded into the `LuaFunction` `namedtuple`,
    which simply wraps the raw serialized data, i.e. upvalues and code.
    These are mostly useless, but exist so you can deserialize anything.
 
-(*) Since Lua allows you to index a table with a table but Python does not, we 
+(*) Since Lua allows you to index a table with a table but Python does not, we
     replace dicts with a subclass that is hashable, and change its
     equality comparison behaviour to compare by reference.
     See `hashable_uniq_dict`.
 
-Currently, the implementation assumes the system-dependent binary Torch 
+Currently, the implementation assumes the system-dependent binary Torch
 format, but minor refactoring can give support for the ascii format as well.
 """
+import struct
+from array import array
+import numpy as np
+import sys
+from collections import namedtuple
+
 
 TYPE_NIL = 0
 TYPE_NUMBER = 1
@@ -38,12 +44,6 @@ TYPE_BOOLEAN = 5
 TYPE_FUNCTION = 6
 TYPE_RECUR_FUNCTION = 8
 LEGACY_TYPE_RECUR_FUNCTION = 7
-
-import struct
-from array import array
-import numpy as np
-import sys
-from collections import namedtuple
 
 LuaFunction = namedtuple('LuaFunction',
                          ['size', 'dumped', 'upvalues'])
@@ -249,8 +249,9 @@ class T7Reader:
         self.objects = {}  # read objects so far
 
         if force_deserialize_classes is not None:
-            raise DeprecationWarning('force_deserialize_classes is now always '
-                                     'forced to be true, so no longer required')
+            raise DeprecationWarning(
+                'force_deserialize_classes is now always '
+                'forced to be true, so no longer required')
         self.use_list_heuristic = use_list_heuristic
         self.use_int_heuristic = use_int_heuristic
         self.force_8bytes_long = force_8bytes_long
@@ -311,9 +312,9 @@ class T7Reader:
         elif typeidx == TYPE_STRING:
             return self.read_string()
 
-        elif (typeidx == TYPE_TABLE or typeidx == TYPE_TORCH
-                or typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION
-                or typeidx == LEGACY_TYPE_RECUR_FUNCTION):
+        elif (typeidx == TYPE_TABLE or typeidx == TYPE_TORCH or
+                typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION or
+                typeidx == LEGACY_TYPE_RECUR_FUNCTION):
             # read the object reference index
             index = self.read_int()
 
@@ -322,8 +323,8 @@ class T7Reader:
                 return self.objects[index]
 
             # otherwise read it
-            if (typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION
-                    or typeidx == LEGACY_TYPE_RECUR_FUNCTION):
+            if (typeidx == TYPE_FUNCTION or typeidx == TYPE_RECUR_FUNCTION or
+                    typeidx == LEGACY_TYPE_RECUR_FUNCTION):
                 size = self.read_int()
                 dumped = self.f.read(size)
                 upvalues = self.read_obj()
@@ -338,24 +339,28 @@ class T7Reader:
                     class_name = self.read_string()
                 else:
                     class_name = version
-                    version_number = 0  # created before existence of versioning
+                    # created before existence of versioning
+                    version_number = 0
                 if class_name in torch_readers:
                     # TODO: can custom readers ever be self-referential?
                     self.objects[index] = None  # FIXME: if self-referential
                     obj = torch_readers[class_name](self, version)
                     self.objects[index] = obj
                 else:
-                    # This must be performed in two steps to allow objects to be a
-                    # property of themselves.
+                    # This must be performed in two steps to allow objects
+                    # to be a property of themselves.
                     obj = TorchObject(
                         class_name, version_number=version_number)
                     self.objects[index] = obj
-                    obj._obj = self.read_obj()  # After self.objects is populated
+                    # After self.objects is populated, it's safe to read in
+                    # case self-referential
+                    obj._obj = self.read_obj()
                 return obj
 
             else:  # it is a table: returns a custom dict or a list
                 size = self.read_int()
-                obj = hashable_uniq_dict()  # custom hashable dict, can be a key
+                # custom hashable dict, so that it can be a key, see above
+                obj = hashable_uniq_dict()
                 # For checking if keys are consecutive and positive ints;
                 # if so, returns a list with indices converted to 0-indices.
                 key_sum = 0
