@@ -14,7 +14,7 @@ Supported types:
  * Torch classes: supports Tensors and Storages, and most classes such as
    modules. Trivially extensible much like the Torch serialization code.
    Trivial torch classes like most `nn.Module` subclasses become
-   `TorchObject`s. The `torch_readers` dict contains the mapping from class
+   `TorchObject`s. The `type_handlers` dict contains the mapping from class
    names to reading functions.
  * functions: loaded into the `LuaFunction` `namedtuple`,
    which simply wraps the raw serialized data, i.e. upvalues and code.
@@ -64,7 +64,10 @@ class hashable_uniq_dict(dict):
         return id(self)
 
     def __getattr__(self, key):
-        return self.get(key)
+        if key in self:
+            return self[key]
+        if isinstance(key, (str, bytes)):
+            return self.get(key.encode('utf8'))
 
     def __eq__(self, other):
         return id(self) == id(other)
@@ -76,81 +79,6 @@ class hashable_uniq_dict(dict):
         raise TypeError(
             'hashable_uniq_dict does not support these comparisons')
     __cmp__ = __ne__ = __le__ = __gt__ = __lt__ = _disabled_binop
-
-torch_readers = {}
-
-
-def add_tensor_reader(typename, dtype):
-    def read_tensor_generic(reader, version):
-        # https://github.com/torch/torch7/blob/1e86025/generic/Tensor.c#L1249
-        ndim = reader.read_int()
-
-        # read size:
-        size = reader.read_long_array(ndim)
-        # read stride:
-        stride = reader.read_long_array(ndim)
-        # storage offset:
-        storage_offset = reader.read_long() - 1
-        # read storage:
-        storage = reader.read_obj()
-
-        if storage is None or ndim == 0 or len(size) == 0 or len(stride) == 0:
-            # empty torch tensor
-            return np.empty((0), dtype=dtype)
-
-        # convert stride to numpy style (i.e. in bytes)
-        stride = [storage.dtype.itemsize * x for x in stride]
-
-        # create numpy array that indexes into the storage:
-        return np.lib.stride_tricks.as_strided(
-            storage[storage_offset:],
-            shape=size,
-            strides=stride)
-    torch_readers[typename] = read_tensor_generic
-add_tensor_reader(b'torch.ByteTensor', dtype=np.uint8)
-add_tensor_reader(b'torch.CharTensor', dtype=np.int8)
-add_tensor_reader(b'torch.ShortTensor', dtype=np.int16)
-add_tensor_reader(b'torch.IntTensor', dtype=np.int32)
-add_tensor_reader(b'torch.LongTensor', dtype=np.int64)
-add_tensor_reader(b'torch.FloatTensor', dtype=np.float32)
-add_tensor_reader(b'torch.DoubleTensor', dtype=np.float64)
-add_tensor_reader(b'torch.CudaTensor', dtype=np.float32)
-add_tensor_reader(b'torch.CudaByteTensor', dtype=np.uint8)
-add_tensor_reader(b'torch.CudaCharTensor', dtype=np.int8)
-add_tensor_reader(b'torch.CudaShortTensor', dtype=np.int16)
-add_tensor_reader(b'torch.CudaIntTensor', dtype=np.int32)
-add_tensor_reader(b'torch.CudaDoubleTensor', dtype=np.float64)
-
-
-def add_storage_reader(typename, dtype):
-    def read_storage(reader, version):
-        # https://github.com/torch/torch7/blob/1e86025/generic/Storage.c#L237
-        size = reader.read_long()
-        return np.fromfile(reader.f, dtype=dtype, count=size)
-    torch_readers[typename] = read_storage
-add_storage_reader(b'torch.ByteStorage', dtype=np.uint8)
-add_storage_reader(b'torch.CharStorage', dtype=np.int8)
-add_storage_reader(b'torch.ShortStorage', dtype=np.int16)
-add_storage_reader(b'torch.IntStorage', dtype=np.int32)
-add_storage_reader(b'torch.LongStorage', dtype=np.int64)
-add_storage_reader(b'torch.FloatStorage', dtype=np.float32)
-add_storage_reader(b'torch.DoubleStorage', dtype=np.float64)
-add_storage_reader(b'torch.CudaStorage', dtype=np.float32)
-add_storage_reader(b'torch.CudaByteStorage', dtype=np.uint8)
-add_storage_reader(b'torch.CudaCharStorage', dtype=np.int8)
-add_storage_reader(b'torch.CudaShortStorage', dtype=np.int16)
-add_storage_reader(b'torch.CudaIntStorage', dtype=np.int32)
-add_storage_reader(b'torch.CudaDoubleStorage', dtype=np.float64)
-
-
-def add_notimpl_reader(typename):
-    def read_notimpl(reader, version):
-        raise NotImplementedError('Reader not implemented for: ' + typename)
-    torch_readers[typename] = read_notimpl
-add_notimpl_reader(b'torch.HalfTensor')
-add_notimpl_reader(b'torch.HalfStorage')
-add_notimpl_reader(b'torch.CudaHalfTensor')
-add_notimpl_reader(b'torch.CudaHalfStorage')
 
 
 class TorchObject(object):
@@ -171,7 +99,6 @@ class TorchObject(object):
     def __getattr__(self, k):
         if k in self._obj:
             return self._obj[k]
-        # Lua's strings are always byte strings
         if isinstance(k, (str, bytes)):
             return self._obj.get(k.encode('utf8'))
 
@@ -196,6 +123,85 @@ class TorchObject(object):
         return keys
 
 
+type_handlers = {}
+
+def register_handler(typename):
+    def do_register(handler):
+        type_handlers[typename] = handler
+    return do_register
+
+
+def add_tensor_reader(typename, dtype):
+    def read_tensor_generic(reader, version):
+        # https://github.com/torch/torch7/blob/1e86025/generic/Tensor.c#L1249
+        ndim = reader.read_int()
+
+        size = reader.read_long_array(ndim)
+        stride = reader.read_long_array(ndim)
+        storage_offset = reader.read_long() - 1  # 0-indexing
+        # read storage:
+        storage = reader.read_obj()
+
+        if storage is None or ndim == 0 or len(size) == 0 or len(stride) == 0:
+            # empty torch tensor
+            return np.empty((0), dtype=dtype)
+
+        # convert stride to numpy style (i.e. in bytes)
+        stride = [storage.dtype.itemsize * x for x in stride]
+
+        # create numpy array that indexes into the storage:
+        return np.lib.stride_tricks.as_strided(
+            storage[storage_offset:],
+            shape=size,
+            strides=stride)
+    type_handlers[typename] = read_tensor_generic
+add_tensor_reader(b'torch.ByteTensor', dtype=np.uint8)
+add_tensor_reader(b'torch.CharTensor', dtype=np.int8)
+add_tensor_reader(b'torch.ShortTensor', dtype=np.int16)
+add_tensor_reader(b'torch.IntTensor', dtype=np.int32)
+add_tensor_reader(b'torch.LongTensor', dtype=np.int64)
+add_tensor_reader(b'torch.FloatTensor', dtype=np.float32)
+add_tensor_reader(b'torch.DoubleTensor', dtype=np.float64)
+add_tensor_reader(b'torch.CudaTensor', dtype=np.float32)
+add_tensor_reader(b'torch.CudaByteTensor', dtype=np.uint8)
+add_tensor_reader(b'torch.CudaCharTensor', dtype=np.int8)
+add_tensor_reader(b'torch.CudaShortTensor', dtype=np.int16)
+add_tensor_reader(b'torch.CudaIntTensor', dtype=np.int32)
+add_tensor_reader(b'torch.CudaDoubleTensor', dtype=np.float64)
+
+
+def add_storage_reader(typename, dtype):
+    def read_storage(reader, version):
+        # https://github.com/torch/torch7/blob/1e86025/generic/Storage.c#L237
+        size = reader.read_long()
+        return np.fromfile(reader.f, dtype=dtype, count=size)
+    type_handlers[typename] = read_storage
+add_storage_reader(b'torch.ByteStorage', dtype=np.uint8)
+add_storage_reader(b'torch.CharStorage', dtype=np.int8)
+add_storage_reader(b'torch.ShortStorage', dtype=np.int16)
+add_storage_reader(b'torch.IntStorage', dtype=np.int32)
+add_storage_reader(b'torch.LongStorage', dtype=np.int64)
+add_storage_reader(b'torch.FloatStorage', dtype=np.float32)
+add_storage_reader(b'torch.DoubleStorage', dtype=np.float64)
+add_storage_reader(b'torch.CudaStorage', dtype=np.float32)
+add_storage_reader(b'torch.CudaByteStorage', dtype=np.uint8)
+add_storage_reader(b'torch.CudaCharStorage', dtype=np.int8)
+add_storage_reader(b'torch.CudaShortStorage', dtype=np.int16)
+add_storage_reader(b'torch.CudaIntStorage', dtype=np.int32)
+add_storage_reader(b'torch.CudaDoubleStorage', dtype=np.float64)
+
+
+def add_notimpl_reader(typename):
+    def read_notimpl(reader, version):
+        raise NotImplementedError('Reader not implemented for: ' + typename)
+    type_handlers[typename] = read_notimpl
+add_notimpl_reader(b'torch.HalfTensor')
+add_notimpl_reader(b'torch.HalfStorage')
+add_notimpl_reader(b'torch.CudaHalfTensor')
+add_notimpl_reader(b'torch.CudaHalfStorage')
+
+
+@register_handler(b'tds.Vec')
 def tds_Vec_reader(reader, version):
     size = reader.read_int()
     obj = []
@@ -205,9 +211,8 @@ def tds_Vec_reader(reader, version):
         obj.append(e)
     return obj
 
-torch_readers[b"tds.Vec"] = tds_Vec_reader
 
-
+@register_handler(b'tds.Hash')
 def tds_Hash_reader(reader, version):
     size = reader.read_int()
     obj = hashable_uniq_dict()
@@ -217,8 +222,6 @@ def tds_Hash_reader(reader, version):
         v = reader.read_obj()
         obj[k] = v
     return obj
-
-torch_readers[b"tds.Hash"] = tds_Hash_reader
 
 
 class T7ReaderException(Exception):
@@ -231,6 +234,7 @@ class T7Reader:
                  fileobj,
                  use_list_heuristic=True,
                  use_int_heuristic=True,
+                 utf8_decode_strings=False,
                  force_deserialize_classes=None,
                  force_8bytes_long=False):
         """
@@ -243,6 +247,10 @@ class T7Reader:
                                 positive integral indices into lists
                                 (default True)
         * `use_int_heuristic`: cast all whole floats into ints (default True)
+        * `utf8_decode_strings`: decode all strings as UTF8. By default they
+                                remain as byte strings. Version strings always
+                                are byte strings, but this setting affects
+                                class names. (default False)
         * `force_deserialize_classes`: deprecated.
         """
         self.f = fileobj
@@ -254,6 +262,7 @@ class T7Reader:
                 'forced to be true, so no longer required')
         self.use_list_heuristic = use_list_heuristic
         self.use_int_heuristic = use_int_heuristic
+        self.utf8_decode_strings = utf8_decode_strings
         self.force_8bytes_long = force_8bytes_long
 
     def _read(self, fmt):
@@ -289,9 +298,12 @@ class T7Reader:
     def read_double(self):
         return self._read('d')[0]
 
-    def read_string(self):
+    def read_string(self, disable_utf8=False):
         size = self.read_int()
-        return self.f.read(size)
+        s = self.f.read(size)
+        if disable_utf8 or not self.utf8_decode_strings:
+            return s
+        return s.decode('utf8')
 
     def read_obj(self):
         typeidx = self.read_int()
@@ -333,18 +345,18 @@ class T7Reader:
                 return obj
 
             elif typeidx == TYPE_TORCH:
-                version = self.read_string()
+                version = self.read_string(disable_utf8=True)
                 if version.startswith(b'V '):
                     version_number = int(float(version.partition(b' ')[2]))
-                    class_name = self.read_string()
+                    class_name = self.read_string(disable_utf8=True)
                 else:
                     class_name = version
                     # created before existence of versioning
                     version_number = 0
-                if class_name in torch_readers:
+                if class_name in type_handlers:
                     # TODO: can custom readers ever be self-referential?
                     self.objects[index] = None  # FIXME: if self-referential
-                    obj = torch_readers[class_name](self, version)
+                    obj = type_handlers[class_name](self, version)
                     self.objects[index] = obj
                 else:
                     # This must be performed in two steps to allow objects
