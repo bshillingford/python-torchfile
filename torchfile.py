@@ -285,7 +285,7 @@ class T7Reader:
     def read_long_array(self, n):
         if self.force_8bytes_long:
             lst = []
-            for i in xrange(n):
+            for i in range(n):
                 lst.append(self.read_long())
             return lst
         else:
