@@ -1,0 +1,5 @@
+include LICENSE
+include *.md
+include tests.py
+recursive-include testfiles_x86_64 *.md
+recursive-include testfiles_x86_64 *.t7
